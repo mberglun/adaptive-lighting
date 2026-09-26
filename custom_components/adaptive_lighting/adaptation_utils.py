@@ -265,6 +265,26 @@ def _identify_light_control_attributes(
     return parameters
 
 
+def plan_service_calls(
+    service_data: ServiceData,
+    transition: float | None,
+    split_delay: float,
+    *,
+    split: bool,
+) -> tuple[list[ServiceData], float]:
+    """Plan the `light.turn_on` calls for adapting a light with `service_data`.
+
+    Returns the service data of the calls in order, split into brightness and color
+    if `split`, and the time to wait before each call after the first.
+    """
+    service_datas = _split_service_call_data(service_data) if split else [service_data]
+    if transition is not None:
+        sleep_time = transition / max(1, len(service_datas)) + split_delay
+    else:
+        sleep_time = split_delay
+    return service_datas, sleep_time
+
+
 def prepare_adaptation_data(
     hass: HomeAssistant,
     entity_id: str,
@@ -283,15 +303,12 @@ def prepare_adaptation_data(
         entity_id,
         service_data,
     )
-    service_datas = _split_service_call_data(service_data) if split else [service_data]
-
-    service_datas_length = len(service_datas)
-
-    if transition is not None:
-        transition_duration_per_data = transition / max(1, service_datas_length)
-        sleep_time = transition_duration_per_data + split_delay
-    else:
-        sleep_time = split_delay
+    service_datas, sleep_time = plan_service_calls(
+        service_data,
+        transition,
+        split_delay,
+        split=split,
+    )
 
     # Keep the original split timing, but omit attributes carried by an
     # intercepted turn-on shared with other lights. Do this before state

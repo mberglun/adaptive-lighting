@@ -87,6 +87,7 @@ from .adaptation_utils import (
     manual_control_event_attribute_to_flags,
     plan_service_calls,
     prepare_adaptation_data,
+    remove_redundant_service_data,
 )
 from .color_and_brightness import SunLightSettings
 from .const import (
@@ -1501,10 +1502,11 @@ class AdaptiveSwitch(SwitchEntity, RestoreEntity):
 
         For each light (all of the switch's if `lights` is `None`), the calls in
         order, each with its service data and the time to wait before it, adapting
-        now or at the `time` of day today (lights without a state are left out).
+        now or at the `time` of day today (lights without a state are left out). With
+        `skip_redundant_commands`, what a light already has is left out.
         Omitted options default to the switch's settings (unlike for `apply`), and
         `transition` to its `initial_transition` (like for `apply`). Manual control
-        and the light's current state don't change the calls, and nothing is sent.
+        doesn't change the calls, and nothing is sent.
         """
         if transition is None:
             transition = self.initial_transition
@@ -1550,6 +1552,14 @@ class AdaptiveSwitch(SwitchEntity, RestoreEntity):
                 self._send_split_delay / 1000.0,
                 split=self._separate_turn_on_commands,
             )
+            if self._skip_redundant_commands:
+                # Leave out what the light already has, as when adapting it
+                state = self.hass.states.get(light)
+                service_datas = [
+                    filtered
+                    for data in service_datas
+                    if (filtered := remove_redundant_service_data(data, state))
+                ]
             commands[light] = [
                 {
                     "service_data": {

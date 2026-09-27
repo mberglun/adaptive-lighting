@@ -176,6 +176,19 @@ def _has_relevant_service_data_attributes(service_data: ServiceData) -> bool:
     return any(attr not in common_attrs for attr in service_data)
 
 
+def remove_redundant_service_data(
+    service_data: ServiceData,
+    state: State | None,
+) -> ServiceData | None:
+    """Remove what the light's `state` already has from the data of a service call.
+
+    Returns `None` if nothing is left that justifies the service call.
+    """
+    if state is not None:
+        service_data = _remove_redundant_attributes(service_data, state=state)
+    return service_data if _has_relevant_service_data_attributes(service_data) else None
+
+
 async def _create_service_call_data_iterator(
     hass: HomeAssistant,
     service_datas: list[ServiceData],
@@ -192,18 +205,12 @@ async def _create_service_call_data_iterator(
     """
     for service_data in service_datas:
         if filter_by_state and (entity_id := service_data.get(ATTR_ENTITY_ID)):
-            current_entity_state = hass.states.get(entity_id)
-
-            # Filter data to remove attributes that equal the current state
-            if current_entity_state is not None:
-                service_data = _remove_redundant_attributes(  # noqa: PLW2901
-                    service_data,
-                    state=current_entity_state,
-                )
-
             # Emit service data if it still contains relevant attributes (else try next)
-            if _has_relevant_service_data_attributes(service_data):
-                yield service_data
+            if filtered := remove_redundant_service_data(
+                service_data,
+                hass.states.get(entity_id),
+            ):
+                yield filtered
         else:
             yield service_data
 

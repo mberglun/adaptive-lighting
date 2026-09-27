@@ -24,6 +24,7 @@ from homeassistant.components.adaptive_lighting.const import (
     CONF_PREFER_RGB_COLOR,
     CONF_SEND_SPLIT_DELAY,
     CONF_SEPARATE_TURN_ON_COMMANDS,
+    CONF_SKIP_REDUNDANT_COMMANDS,
     CONF_SLEEP_RGB_OR_COLOR_TEMP,
     CONF_TRANSITION,
     DEFAULT_SLEEP_BRIGHTNESS,
@@ -738,3 +739,101 @@ async def test_get_commands_response_is_json(hass):
     switch, _ = await setup_lights_and_switch(hass, {CONF_PREFER_RGB_COLOR: True})
     commands = await _get_commands(hass, switch)
     assert json.loads(json.dumps(commands)) == commands
+
+
+@pytest.mark.parametrize("skip_redundant", [True, False])
+async def test_get_commands_skip_redundant(hass, skip_redundant):
+    """With `skip_redundant_commands`, what a light already has is left out."""
+    switch, _ = await setup_lights_and_switch(
+        hass,
+        {CONF_SKIP_REDUNDANT_COMMANDS: skip_redundant},
+    )
+    with patch(UTCNOW, return_value=_noon()):
+        full = await _get_commands(hass, switch, lights=[ENTITY_LIGHT_1])
+        (call,) = full[ENTITY_LIGHT_1]
+        target = call["service_data"]
+        # The light has the brightness already, but another color temperature
+        await hass.services.async_call(
+            "light",
+            SERVICE_TURN_ON,
+            {
+                ATTR_ENTITY_ID: ENTITY_LIGHT_1,
+                ATTR_BRIGHTNESS: target[ATTR_BRIGHTNESS],
+                ATTR_COLOR_TEMP_KELVIN: target[ATTR_COLOR_TEMP_KELVIN] - 1000,
+            },
+            blocking=True,
+        )
+        partial = await _get_commands(hass, switch, lights=[ENTITY_LIGHT_1])
+        # And then everything
+        await hass.services.async_call("light", SERVICE_TURN_ON, target, blocking=True)
+        nothing = await _get_commands(hass, switch, lights=[ENTITY_LIGHT_1])
+    if not skip_redundant:
+        assert partial == nothing == full
+        return
+    (call,) = partial[ENTITY_LIGHT_1]
+    assert set(call["service_data"]) == {ATTR_ENTITY_ID, ATTR_COLOR_TEMP_KELVIN}
+    assert nothing == {ENTITY_LIGHT_1: []}
+
+
+async def test_get_commands_skip_redundant_split(hass):
+    """A split call with nothing left is dropped, and the rest isn't delayed."""
+    switch, _ = await setup_lights_and_switch(
+        hass,
+        {
+            CONF_SKIP_REDUNDANT_COMMANDS: True,
+            CONF_SEPARATE_TURN_ON_COMMANDS: True,
+            CONF_SEND_SPLIT_DELAY: 100,
+        },
+    )
+    with patch(UTCNOW, return_value=_noon()):
+        full = await _get_commands(hass, switch, lights=[ENTITY_LIGHT_1])
+        brightness_call, color_call = full[ENTITY_LIGHT_1]
+        await hass.services.async_call(
+            "light",
+            SERVICE_TURN_ON,
+            {
+                **brightness_call["service_data"],
+                ATTR_COLOR_TEMP_KELVIN: (
+                    color_call["service_data"][ATTR_COLOR_TEMP_KELVIN] - 1000
+                ),
+            },
+            blocking=True,
+        )
+        commands = await _get_commands(hass, switch, lights=[ENTITY_LIGHT_1])
+    assert commands == {
+        ENTITY_LIGHT_1: [{"service_data": color_call["service_data"], "delay": 0}],
+    }
+
+
+async def test_get_commands_skip_redundant_match_what_apply_sends(hass):
+    """With `skip_redundant_commands`, the calls are still what `apply` sends."""
+    switch, _ = await setup_lights_and_switch(
+        hass,
+        {CONF_SKIP_REDUNDANT_COMMANDS: True},
+    )
+    with patch(UTCNOW, return_value=_noon()):
+        (call,) = (await _get_commands(hass, switch, lights=[ENTITY_LIGHT_1]))[
+            ENTITY_LIGHT_1
+        ]
+        await hass.services.async_call(
+            "light",
+            SERVICE_TURN_ON,
+            {
+                ATTR_ENTITY_ID: ENTITY_LIGHT_1,
+                ATTR_BRIGHTNESS: call["service_data"][ATTR_BRIGHTNESS],
+                ATTR_COLOR_TEMP_KELVIN: (
+                    call["service_data"][ATTR_COLOR_TEMP_KELVIN] - 1000
+                ),
+            },
+            blocking=True,
+        )
+        commands = await _get_commands(hass, switch, lights=[ENTITY_LIGHT_1])
+        calls = _track_adaptive_light_calls(hass)
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE_APPLY,
+            {ATTR_ENTITY_ID: switch.entity_id, CONF_LIGHTS: [ENTITY_LIGHT_1]},
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+    assert [c["service_data"] for c in commands[ENTITY_LIGHT_1]] == calls

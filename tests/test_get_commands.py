@@ -775,7 +775,8 @@ async def test_get_commands_skip_redundant(hass, skip_redundant):
     assert nothing == {ENTITY_LIGHT_1: []}
 
 
-async def test_get_commands_skip_redundant_split(hass):
+@pytest.mark.parametrize("already_has", ["brightness", "color"])
+async def test_get_commands_skip_redundant_split(hass, already_has):
     """A split call with nothing left is dropped, and the rest isn't delayed."""
     switch, _ = await setup_lights_and_switch(
         hass,
@@ -788,20 +789,26 @@ async def test_get_commands_skip_redundant_split(hass):
     with patch(UTCNOW, return_value=_noon()):
         full = await _get_commands(hass, switch, lights=[ENTITY_LIGHT_1])
         brightness_call, color_call = full[ENTITY_LIGHT_1]
+        brightness = brightness_call["service_data"][ATTR_BRIGHTNESS]
+        color_temp = color_call["service_data"][ATTR_COLOR_TEMP_KELVIN]
         await hass.services.async_call(
             "light",
             SERVICE_TURN_ON,
             {
-                **brightness_call["service_data"],
+                ATTR_ENTITY_ID: ENTITY_LIGHT_1,
+                ATTR_BRIGHTNESS: (
+                    brightness if already_has == "brightness" else brightness - 50
+                ),
                 ATTR_COLOR_TEMP_KELVIN: (
-                    color_call["service_data"][ATTR_COLOR_TEMP_KELVIN] - 1000
+                    color_temp if already_has == "color" else color_temp - 1000
                 ),
             },
             blocking=True,
         )
         commands = await _get_commands(hass, switch, lights=[ENTITY_LIGHT_1])
+    remaining = color_call if already_has == "brightness" else brightness_call
     assert commands == {
-        ENTITY_LIGHT_1: [{"service_data": color_call["service_data"], "delay": 0}],
+        ENTITY_LIGHT_1: [{"service_data": remaining["service_data"], "delay": 0}],
     }
 
 

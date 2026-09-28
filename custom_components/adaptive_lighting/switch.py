@@ -1503,7 +1503,7 @@ class AdaptiveSwitch(SwitchEntity, RestoreEntity):
         For each light (all of the switch's if `lights` is `None`), the calls in
         order, each with its service data and the time to wait before it, adapting
         now or at the `time` of day today (lights without a state are left out). With
-        `skip_redundant_commands`, what a light already has is left out.
+        `skip_redundant_commands`, what a light already has (now) is left out.
         Omitted options default to the switch's settings (unlike for `apply`), and
         `transition` to its `initial_transition` (like for `apply`). Manual control
         doesn't change the calls, and nothing is sent.
